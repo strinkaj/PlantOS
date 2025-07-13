@@ -1,0 +1,65 @@
+# Prometheus Configuration for PlantOS Development
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alerts/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # PlantOS Python API
+  - job_name: 'plantos-api'
+    static_configs:
+      - targets: ['host.containers.internal:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+    scrape_timeout: 5s
+
+  # Go streaming service
+  - job_name: 'plantos-streaming'
+    static_configs:
+      - targets: ['host.containers.internal:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+
+  # Go device manager
+  - job_name: 'plantos-device-manager'
+    static_configs:
+      - targets: ['host.containers.internal:8002']
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+
+  # Julia analytics service
+  - job_name: 'plantos-analytics'
+    static_configs:
+      - targets: ['host.containers.internal:8003']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # PostgreSQL metrics (requires postgres_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['host.containers.internal:9187']
+    scrape_interval: 30s
+
+  # Redis metrics (requires redis_exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['host.containers.internal:9121']
+    scrape_interval: 30s
+
+  # System metrics (requires node_exporter)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['host.containers.internal:9100']
+    scrape_interval: 30s

@@ -1,0 +1,190 @@
+# PlantOS Development Environment
+# Run with: podman-compose up -d
+version: '3.8'
+
+services:
+  # PostgreSQL with TimescaleDB for time-series data
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: plantos_postgres
+    environment:
+      POSTGRES_DB: plantos_dev
+      POSTGRES_USER: plantos_user
+      POSTGRES_PASSWORD: plantos_dev_password
+      TIMESCALEDB_TELEMETRY: 'off'
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plantos_user -d plantos_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - plantos_dev
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: plantos_redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - plantos_dev
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: plantos_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/alerts:/etc/prometheus/alerts
+      - prometheus_data:/prometheus
+    depends_on:
+      - redis
+    networks:
+      - plantos_dev
+
+  # Grafana for monitoring dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: plantos_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: plantos123
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_SECURITY_ALLOW_EMBEDDING: 'true'
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - plantos_dev
+
+  # Apache Kafka for event streaming
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: plantos_kafka
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168  # 7 days
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824  # 1GB
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - plantos_dev
+
+  # Zookeeper for Kafka coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: plantos_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - plantos_dev
+
+  # MinIO for object storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: plantos_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: plantos_admin
+      MINIO_ROOT_PASSWORD: plantos_dev_password
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - plantos_dev
+
+  # Apache Spark for batch processing (development)
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: plantos_spark_master
+    environment:
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: 'no'
+      SPARK_RPC_ENCRYPTION_ENABLED: 'no'
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: 'no'
+      SPARK_SSL_ENABLED: 'no'
+    ports:
+      - "8080:8080"  # Web UI
+      - "7077:7077"  # Master port
+    volumes:
+      - ./analytics/spark:/opt/spark-apps
+    networks:
+      - plantos_dev
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  kafka_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_logs:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  plantos_dev:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

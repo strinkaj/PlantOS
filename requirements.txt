@@ -1,0 +1,102 @@
+# PlantOS Production Dependencies
+# Python 3.12+ required for PlantOS production deployment
+
+# ===== Core API Framework =====
+fastapi==0.104.1                 # High-performance async API framework
+uvicorn[standard]==0.24.0        # ASGI server with uvloop and httptools
+pydantic[email]==2.5.0           # Data validation and serialization
+pydantic-settings==2.1.0         # Settings management with validation
+
+# ===== Database & ORM =====
+sqlalchemy[asyncio]==2.0.23      # Async ORM for PostgreSQL
+alembic==1.13.0                  # Database migrations
+psycopg2-binary==2.9.9           # PostgreSQL driver (TimescaleDB compatible)
+asyncpg==0.29.0                  # Async PostgreSQL driver
+
+# ===== Caching & Session Management =====
+redis==5.0.1                     # Redis client
+aioredis==2.0.1                  # Async Redis client
+
+# ===== Structured Logging & Monitoring =====
+structlog==23.2.0                # Structured logging for JSON output
+prometheus-client==0.19.0        # Prometheus metrics collection
+opentelemetry-api==1.21.0        # Distributed tracing API
+opentelemetry-sdk==1.21.0        # Tracing SDK
+opentelemetry-instrumentation-fastapi==0.42b0  # FastAPI auto-instrumentation
+opentelemetry-exporter-prometheus==1.12.0rc1   # Prometheus exporter
+
+# ===== Security & Authentication =====
+passlib[bcrypt]==1.7.4           # Password hashing
+python-jose[cryptography]==3.3.0 # JWT token handling
+python-multipart==0.0.6          # Form/file upload support
+cryptography==41.0.7             # Cryptographic utilities
+
+# ===== Configuration & Environment =====
+python-dotenv==1.0.0             # Environment variable loading
+pyyaml==6.0.1                    # YAML configuration files
+click==8.1.7                     # CLI framework for management commands
+
+# ===== Data Processing & Analytics =====
+pandas==2.1.4                    # Data manipulation and analysis
+numpy==1.25.2                    # Numerical computing
+scipy==1.11.4                    # Scientific computing
+scikit-learn==1.3.2              # Machine learning algorithms
+
+# ===== Time Series & Plant Analytics =====
+pytz==2023.3                     # Timezone handling
+pendulum==2.1.2                  # Better datetime handling
+crontab==1.0.1                   # Cron expression parsing for scheduling
+
+# ===== Hardware Interface (Raspberry Pi) =====
+RPi.GPIO==0.7.1; platform_machine=="armv7l" or platform_machine=="aarch64"  # GPIO control (Pi only)
+gpiozero==1.6.2; platform_machine=="armv7l" or platform_machine=="aarch64"  # GPIO abstraction (Pi only)
+w1thermsensor==2.0.0; platform_machine=="armv7l" or platform_machine=="aarch64"  # Temperature sensors (Pi only)
+
+# ===== PySpark Integration =====
+pyspark==3.5.0                   # Apache Spark for batch analytics
+py4j==0.10.9.7                   # Python-Java bridge for Spark
+
+# ===== HTTP Client & External APIs =====
+httpx==0.25.2                    # Async HTTP client for weather APIs
+aiohttp==3.9.1                   # Alternative async HTTP client
+requests==2.31.0                 # Synchronous HTTP client (fallback)
+
+# ===== Data Validation & Serialization =====
+marshmallow==3.20.1              # Serialization library (alternative to Pydantic)
+jsonschema==4.20.0               # JSON schema validation
+cerberus==1.3.5                  # Lightweight data validation
+
+# ===== Task Queue & Background Jobs =====
+celery==5.3.4                    # Distributed task queue
+kombu==5.3.4                     # Message queue abstraction
+
+# ===== File Handling & Storage =====
+pillow==10.1.0                   # Image processing for plant photos
+boto3==1.34.0                    # AWS SDK (for S3-compatible storage)
+minio==7.2.0                     # MinIO client for object storage
+
+# ===== Network & Protocol Support =====
+websockets==12.0                 # WebSocket support for real-time updates
+grpcio==1.59.3                   # gRPC client for Go services
+protobuf==4.25.1                 # Protocol buffers
+
+# ===== Math & Optimization =====
+sympy==1.12                      # Symbolic mathematics
+cvxpy==1.4.1                     # Convex optimization
+pulp==2.7.0                      # Linear programming
+
+# ===== Utilities =====
+rich==13.7.0                     # Rich text and beautiful formatting
+typer==0.9.0                     # Modern CLI applications
+schedule==1.2.0                  # Job scheduling
+python-dateutil==2.8.2          # Date utilities
+zoneinfo==0.2.1; python_version<"3.9"  # Timezone data backport
+
+# ===== FFI for Rust Hardware Drivers =====
+cffi==1.16.0                     # C Foreign Function Interface
+ctypes-sh==0.1.2                 # Simplified ctypes usage
+
+# ===== Production Server & Deployment =====
+gunicorn==21.2.0                 # WSGI HTTP Server
+supervisor==4.2.5                # Process control system
+python-systemd==235; platform_system=="Linux"  # systemd integration (Linux only)
