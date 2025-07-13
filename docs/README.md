@@ -6,9 +6,11 @@ PlantOS is a production-grade automated plant care system demonstrating enterpri
 ## Technology Stack
 
 ### Core Languages
-- **Python 3.12+**: API services, business logic, ML/AI plant health models, analytics
+- **Python 3.12+**: API services, business logic, orchestration, simple analytics
 - **Go**: High-performance sensor data streaming, concurrent device management
 - **Rust**: Complete hardware control, memory-safe sensor and actuator drivers
+- **Julia**: Scientific computing, optimization algorithms, plant modeling, forecasting
+- **Bash**: DevOps automation, deployment scripts, system administration, Pi configuration
 - **SQL**: Complex time-series queries with PostgreSQL/TimescaleDB
 
 ### Data Engineering Stack (Free for Personal Use)

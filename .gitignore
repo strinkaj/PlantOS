@@ -248,6 +248,31 @@ vendor/
 *.dylib
 *.dll
 
+# Julia
+# Generated files
+/analytics/julia/Manifest.toml
+/analytics/julia/deps/
+# Julia compiled cache
+*.ji
+# Julia temporary files
+.julia/
+# Jupyter notebooks
+*.ipynb
+!**/examples/*.ipynb
+
+# Bash/Shell Scripts
+# Temporary script files
+*.tmp.sh
+*.temp.sh
+# Script execution logs
+/scripts/*/*.log
+/scripts/*/logs/
+# Deployment packages
+/dist/
+/scripts/deployment/packages/
+# Generated configuration files
+/scripts/*/generated-configs/
+
 # Data Engineering Tools
 # Apache Spark
 /analytics/spark/spark-warehouse/
