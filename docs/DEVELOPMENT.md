@@ -2,13 +2,20 @@
 
 ## Development Environment Setup
 
-### Prerequisites
-- Python 3.12+
-- PostgreSQL 15+ with TimescaleDB
-- Redis 7+
-- GCC/Clang for C development
-- Docker & Docker Compose
-- Make
+### Prerequisites (All Free for Personal Use)
+- Python 3.12+ (PSF License)
+- Go 1.21+ (BSD License)
+- Rust 1.75+ with Cargo (MIT/Apache 2.0)
+- PostgreSQL 15+ with TimescaleDB extension (PostgreSQL/Apache 2.0)
+- Redis 7+ (BSD License)
+- Container Runtime (choose one):
+  - Podman & Podman Compose (Apache 2.0) - recommended for all users
+  - Docker & Docker Compose (free for personal/small business)
+  - containerd with nerdctl (Apache 2.0)
+- Make (GPL)
+- Infrastructure as Code:
+  - OpenTofu 1.6+ (MPL 2.0) - recommended
+  - Terraform 1.6+ (BSL - check license for business use)
 
 ### Initial Setup
 ```bash
@@ -29,8 +36,11 @@ pip install -r requirements-dev.txt
 # Setup pre-commit hooks
 pre-commit install
 
-# Initialize database
+# Initialize database (using Podman)
+podman-compose up -d postgres redis
+# OR using Docker
 docker-compose up -d postgres redis
+
 alembic upgrade head
 
 # Run tests
@@ -114,80 +124,564 @@ class Container(containers.DeclarativeContainer):
     )
 ```
 
-### C Code Standards
 
-#### Header Guards and Documentation
-```c
-#ifndef PLANTOS_MOISTURE_SENSOR_H
-#define PLANTOS_MOISTURE_SENSOR_H
+### Go Code Standards
 
-/**
- * @file moisture_sensor.h
- * @brief Capacitive soil moisture sensor interface
- * @author Your Name
- * @date 2024-01-01
- */
+#### Service Structure
+```go
+// services/streaming/sensor_pipeline.go
+package streaming
 
-#include <stdint.h>
-#include <stdbool.h>
+import (
+    "context"
+    "fmt"
+    "sync"
+    "time"
+    
+    "github.com/prometheus/client_golang/prometheus"
+    "go.uber.org/zap"
+)
 
-/**
- * @brief Initialize moisture sensor
- * @param pin ADC pin number
- * @return 0 on success, error code on failure
- */
-int moisture_sensor_init(uint8_t pin);
+// SensorEvent represents a single sensor reading
+type SensorEvent struct {
+    SensorID  string    `json:"sensor_id"`
+    PlantID   string    `json:"plant_id"`
+    Type      string    `json:"type"`
+    Value     float64   `json:"value"`
+    Unit      string    `json:"unit"`
+    Timestamp time.Time `json:"timestamp"`
+}
 
-/**
- * @brief Read calibrated moisture percentage
- * @param moisture Output moisture percentage (0-100)
- * @return 0 on success, error code on failure
- */
-int moisture_sensor_read(float *moisture);
+// Pipeline processes sensor events in real-time
+type Pipeline struct {
+    logger      *zap.Logger
+    metrics     *Metrics
+    bufferSize  int
+    workerCount int
+    
+    mu       sync.RWMutex
+    handlers map[string]EventHandler
+}
 
-#endif /* PLANTOS_MOISTURE_SENSOR_H */
+// NewPipeline creates a new sensor data pipeline
+func NewPipeline(logger *zap.Logger, opts ...Option) *Pipeline {
+    p := &Pipeline{
+        logger:      logger,
+        bufferSize:  10000,
+        workerCount: 10,
+        handlers:    make(map[string]EventHandler),
+    }
+    
+    for _, opt := range opts {
+        opt(p)
+    }
+    
+    p.metrics = newMetrics()
+    return p
+}
+
+// Run starts the pipeline processing
+func (p *Pipeline) Run(ctx context.Context) error {
+    eventCh := make(chan SensorEvent, p.bufferSize)
+    errCh := make(chan error, p.workerCount)
+    
+    var wg sync.WaitGroup
+    
+    // Start workers
+    for i := 0; i < p.workerCount; i++ {
+        wg.Add(1)
+        go p.worker(ctx, i, eventCh, errCh, &wg)
+    }
+    
+    // Wait for context cancellation
+    <-ctx.Done()
+    
+    close(eventCh)
+    wg.Wait()
+    
+    return nil
+}
 ```
 
-#### Error Handling in C
-```c
-#include "moisture_sensor.h"
-#include "hardware/adc.h"
-#include "utils/logger.h"
+#### Error Handling in Go
+```go
+// errors/sensor_errors.go
+package errors
 
-#define MOISTURE_SENSOR_OK 0
-#define MOISTURE_SENSOR_ERROR_INIT -1
-#define MOISTURE_SENSOR_ERROR_READ -2
-#define MOISTURE_SENSOR_ERROR_CALIBRATION -3
+import (
+    "errors"
+    "fmt"
+)
 
-typedef struct {
-    uint8_t pin;
-    uint16_t dry_value;
-    uint16_t wet_value;
-    bool initialized;
-} moisture_sensor_t;
+var (
+    ErrSensorNotFound     = errors.New("sensor not found")
+    ErrInvalidReading     = errors.New("invalid sensor reading")
+    ErrPipelineOverloaded = errors.New("pipeline buffer full")
+)
 
-static moisture_sensor_t sensor = {0};
+// SensorError provides detailed error information
+type SensorError struct {
+    SensorID string
+    Type     string
+    Err      error
+}
 
-int moisture_sensor_read(float *moisture) {
-    if (!sensor.initialized) {
-        log_error("Moisture sensor not initialized");
-        return MOISTURE_SENSOR_ERROR_INIT;
+func (e *SensorError) Error() string {
+    return fmt.Sprintf("sensor %s (%s): %v", e.SensorID, e.Type, e.Err)
+}
+
+func (e *SensorError) Unwrap() error {
+    return e.Err
+}
+
+// WrapSensorError creates a new sensor error
+func WrapSensorError(sensorID, sensorType string, err error) error {
+    if err == nil {
+        return nil
+    }
+    return &SensorError{
+        SensorID: sensorID,
+        Type:     sensorType,
+        Err:      err,
+    }
+}
+```
+
+#### Concurrent Device Management
+```go
+// services/device/manager.go
+package device
+
+import (
+    "context"
+    "sync"
+    "time"
+)
+
+// Manager handles multiple plant devices concurrently
+type Manager struct {
+    mu      sync.RWMutex
+    devices map[string]*Device
+    
+    pollInterval time.Duration
+    maxRetries   int
+}
+
+// PollAll reads from all devices concurrently
+func (m *Manager) PollAll(ctx context.Context) ([]Reading, error) {
+    m.mu.RLock()
+    deviceCount := len(m.devices)
+    devices := make([]*Device, 0, deviceCount)
+    for _, d := range m.devices {
+        devices = append(devices, d)
+    }
+    m.mu.RUnlock()
+    
+    // Use buffered channel for results
+    resultCh := make(chan Reading, deviceCount)
+    errCh := make(chan error, deviceCount)
+    
+    var wg sync.WaitGroup
+    
+    // Poll each device concurrently
+    for _, device := range devices {
+        wg.Add(1)
+        go func(d *Device) {
+            defer wg.Done()
+            
+            reading, err := d.Read(ctx)
+            if err != nil {
+                errCh <- WrapDeviceError(d.ID, err)
+                return
+            }
+            
+            resultCh <- reading
+        }(device)
     }
     
-    if (moisture == NULL) {
-        log_error("NULL pointer provided for moisture output");
-        return MOISTURE_SENSOR_ERROR_READ;
+    // Wait for all goroutines
+    go func() {
+        wg.Wait()
+        close(resultCh)
+        close(errCh)
+    }()
+    
+    // Collect results
+    var readings []Reading
+    var errs []error
+    
+    for {
+        select {
+        case reading, ok := <-resultCh:
+            if !ok {
+                resultCh = nil
+            } else {
+                readings = append(readings, reading)
+            }
+        case err, ok := <-errCh:
+            if !ok {
+                errCh = nil
+            } else if err != nil {
+                errs = append(errs, err)
+            }
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        }
+        
+        if resultCh == nil && errCh == nil {
+            break
+        }
     }
     
-    uint16_t raw_value;
-    if (adc_read(sensor.pin, &raw_value) != 0) {
-        log_error("Failed to read ADC pin %d", sensor.pin);
-        return MOISTURE_SENSOR_ERROR_READ;
+    if len(errs) > 0 {
+        return readings, &MultiError{Errors: errs}
     }
     
-    // Calibrate and convert to percentage
-    *moisture = calibrate_moisture(raw_value);
-    return MOISTURE_SENSOR_OK;
+    return readings, nil
+}
+```
+
+### Rust Code Standards
+
+#### Safety-Critical Sensor Driver
+```rust
+// hardware/drivers/src/moisture_sensor.rs
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::fmt;
+
+#[derive(Debug, Clone, Copy)]
+pub enum SensorError {
+    NotInitialized,
+    ReadTimeout,
+    InvalidValue(f32),
+    HardwareFault,
+}
+
+impl fmt::Display for SensorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SensorError::NotInitialized => write!(f, "Sensor not initialized"),
+            SensorError::ReadTimeout => write!(f, "Sensor read timeout"),
+            SensorError::InvalidValue(v) => write!(f, "Invalid sensor value: {}", v),
+            SensorError::HardwareFault => write!(f, "Hardware fault detected"),
+        }
+    }
+}
+
+impl std::error::Error for SensorError {}
+
+/// Thread-safe moisture sensor interface
+pub struct MoistureSensor {
+    pin: u8,
+    state: Arc<Mutex<SensorState>>,
+    calibration: Calibration,
+}
+
+struct SensorState {
+    initialized: bool,
+    last_reading: Option<Reading>,
+    error_count: u32,
+}
+
+struct Reading {
+    value: f32,
+    timestamp: Instant,
+}
+
+struct Calibration {
+    dry_value: u16,
+    wet_value: u16,
+}
+
+impl MoistureSensor {
+    /// Create a new moisture sensor instance
+    pub fn new(pin: u8) -> Result<Self, SensorError> {
+        if pin > 39 {
+            return Err(SensorError::InvalidValue(pin as f32));
+        }
+        
+        Ok(Self {
+            pin,
+            state: Arc::new(Mutex::new(SensorState {
+                initialized: false,
+                last_reading: None,
+                error_count: 0,
+            })),
+            calibration: Calibration {
+                dry_value: 2800,
+                wet_value: 1200,
+            },
+        })
+    }
+    
+    /// Initialize the sensor hardware
+    pub fn init(&self) -> Result<(), SensorError> {
+        let mut state = self.state.lock().unwrap();
+        
+        // Initialize ADC for the pin
+        unsafe {
+            // Safety: We've validated the pin number
+            if adc_init(self.pin) != 0 {
+                return Err(SensorError::HardwareFault);
+            }
+        }
+        
+        state.initialized = true;
+        state.error_count = 0;
+        
+        Ok(())
+    }
+    
+    /// Read moisture percentage (0-100)
+    pub fn read(&self) -> Result<f32, SensorError> {
+        let mut state = self.state.lock().unwrap();
+        
+        if !state.initialized {
+            return Err(SensorError::NotInitialized);
+        }
+        
+        // Read raw ADC value
+        let raw_value = unsafe {
+            // Safety: Sensor is initialized and pin is valid
+            let mut value: u16 = 0;
+            if adc_read(self.pin, &mut value as *mut u16) != 0 {
+                state.error_count += 1;
+                return Err(SensorError::ReadTimeout);
+            }
+            value
+        };
+        
+        // Convert to percentage
+        let percentage = self.calibrate_value(raw_value);
+        
+        // Validate reading
+        if !(0.0..=100.0).contains(&percentage) {
+            state.error_count += 1;
+            return Err(SensorError::InvalidValue(percentage));
+        }
+        
+        // Update state
+        state.last_reading = Some(Reading {
+            value: percentage,
+            timestamp: Instant::now(),
+        });
+        state.error_count = 0;
+        
+        Ok(percentage)
+    }
+    
+    fn calibrate_value(&self, raw: u16) -> f32 {
+        let range = self.calibration.dry_value - self.calibration.wet_value;
+        let normalized = (self.calibration.dry_value - raw) as f32 / range as f32;
+        (normalized * 100.0).clamp(0.0, 100.0)
+    }
+}
+
+// FFI bindings for Python
+#[no_mangle]
+pub extern "C" fn moisture_sensor_create(pin: u8) -> *mut MoistureSensor {
+    match MoistureSensor::new(pin) {
+        Ok(sensor) => Box::into_raw(Box::new(sensor)),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn moisture_sensor_read(sensor: *mut MoistureSensor, value: *mut f32) -> i32 {
+    if sensor.is_null() || value.is_null() {
+        return -1;
+    }
+    
+    let sensor = unsafe { &*sensor };
+    
+    match sensor.read() {
+        Ok(v) => {
+            unsafe { *value = v };
+            0
+        }
+        Err(_) => -2,
+    }
+}
+
+// External C functions (defined in hardware abstraction layer)
+extern "C" {
+    fn adc_init(pin: u8) -> i32;
+    fn adc_read(pin: u8, value: *mut u16) -> i32;
+}
+```
+
+#### Memory-Safe Pump Controller
+```rust
+// hardware/drivers/src/pump_controller.rs
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, Semaphore};
+
+/// Safety-critical pump controller with automatic shutoff
+pub struct PumpController {
+    pin: u8,
+    state: Arc<PumpState>,
+    safety: Arc<SafetyMonitor>,
+    semaphore: Arc<Semaphore>,
+}
+
+struct PumpState {
+    is_running: AtomicBool,
+    start_time: Mutex<Option<Instant>>,
+    total_runtime_ms: AtomicU64,
+}
+
+struct SafetyMonitor {
+    max_continuous_runtime: Duration,
+    min_cycle_interval: Duration,
+    last_stop_time: Mutex<Option<Instant>>,
+}
+
+impl PumpController {
+    pub fn new(pin: u8) -> Self {
+        Self {
+            pin,
+            state: Arc::new(PumpState {
+                is_running: AtomicBool::new(false),
+                start_time: Mutex::new(None),
+                total_runtime_ms: AtomicU64::new(0),
+            }),
+            safety: Arc::new(SafetyMonitor {
+                max_continuous_runtime: Duration::from_secs(120), // 2 minutes max
+                min_cycle_interval: Duration::from_secs(60),      // 1 minute between runs
+                last_stop_time: Mutex::new(None),
+            }),
+            semaphore: Arc::new(Semaphore::new(1)), // Only one operation at a time
+        }
+    }
+    
+    /// Run pump for specified duration with safety checks
+    pub async fn run_for_duration(&self, duration: Duration) -> Result<(), PumpError> {
+        // Acquire semaphore to ensure exclusive access
+        let _permit = self.semaphore.acquire().await.unwrap();
+        
+        // Safety check: minimum cycle interval
+        if let Some(last_stop) = *self.safety.last_stop_time.lock().await {
+            let elapsed = Instant::now().duration_since(last_stop);
+            if elapsed < self.safety.min_cycle_interval {
+                return Err(PumpError::CycleIntervalViolation);
+            }
+        }
+        
+        // Safety check: duration limit
+        if duration > self.safety.max_continuous_runtime {
+            return Err(PumpError::DurationExceeded);
+        }
+        
+        // Start pump
+        self.start_internal().await?;
+        
+        // Run for specified duration
+        tokio::time::sleep(duration).await;
+        
+        // Stop pump
+        self.stop_internal().await?;
+        
+        Ok(())
+    }
+    
+    /// Emergency stop - can be called from any thread
+    pub fn emergency_stop(&self) -> Result<(), PumpError> {
+        if self.state.is_running.load(Ordering::SeqCst) {
+            unsafe {
+                // Safety: Direct hardware control for emergency
+                gpio_write(self.pin, 0);
+            }
+            self.state.is_running.store(false, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    
+    async fn start_internal(&self) -> Result<(), PumpError> {
+        if self.state.is_running.load(Ordering::SeqCst) {
+            return Err(PumpError::AlreadyRunning);
+        }
+        
+        unsafe {
+            // Safety: Pin has been validated
+            if gpio_write(self.pin, 1) != 0 {
+                return Err(PumpError::HardwareFault);
+            }
+        }
+        
+        self.state.is_running.store(true, Ordering::SeqCst);
+        *self.state.start_time.lock().await = Some(Instant::now());
+        
+        // Start safety monitor
+        self.spawn_safety_monitor();
+        
+        Ok(())
+    }
+    
+    async fn stop_internal(&self) -> Result<(), PumpError> {
+        if !self.state.is_running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        
+        unsafe {
+            // Safety: Pin has been validated
+            if gpio_write(self.pin, 0) != 0 {
+                return Err(PumpError::HardwareFault);
+            }
+        }
+        
+        // Update state
+        self.state.is_running.store(false, Ordering::SeqCst);
+        
+        // Record runtime
+        if let Some(start) = *self.state.start_time.lock().await {
+            let runtime = Instant::now().duration_since(start);
+            self.state.total_runtime_ms.fetch_add(
+                runtime.as_millis() as u64,
+                Ordering::SeqCst
+            );
+        }
+        
+        *self.safety.last_stop_time.lock().await = Some(Instant::now());
+        
+        Ok(())
+    }
+    
+    fn spawn_safety_monitor(&self) {
+        let state = Arc::clone(&self.state);
+        let safety = Arc::clone(&self.safety);
+        let pin = self.pin;
+        
+        tokio::spawn(async move {
+            while state.is_running.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                
+                // Check for timeout
+                if let Some(start) = *state.start_time.lock().await {
+                    if Instant::now().duration_since(start) > safety.max_continuous_runtime {
+                        // Emergency shutoff
+                        unsafe { gpio_write(pin, 0); }
+                        state.is_running.store(false, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+}
+
+#[derive(Debug)]
+pub enum PumpError {
+    AlreadyRunning,
+    HardwareFault,
+    DurationExceeded,
+    CycleIntervalViolation,
+}
+
+extern "C" {
+    fn gpio_write(pin: u8, value: u8) -> i32;
 }
 ```
 
@@ -350,39 +844,258 @@ class TestPlantRepository:
         assert retrieved.name == "Test Plant"
 ```
 
-### Hardware Testing (C)
-```c
-#include "unity.h"
-#include "moisture_sensor.h"
-#include "mock_adc.h"
 
-void setUp(void) {
-    mock_adc_reset();
+### Go Testing
+```go
+// services/streaming/sensor_pipeline_test.go
+package streaming
+
+import (
+    "context"
+    "testing"
+    "time"
+    
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/mock"
+    "go.uber.org/zap/zaptest"
+)
+
+type MockEventHandler struct {
+    mock.Mock
 }
 
-void test_moisture_sensor_init_success(void) {
-    // Arrange
-    uint8_t pin = 34;
-    
-    // Act
-    int result = moisture_sensor_init(pin);
-    
-    // Assert
-    TEST_ASSERT_EQUAL(0, result);
+func (m *MockEventHandler) Handle(ctx context.Context, event SensorEvent) error {
+    args := m.Called(ctx, event)
+    return args.Error(0)
 }
 
-void test_moisture_sensor_read_returns_valid_percentage(void) {
-    // Arrange
-    moisture_sensor_init(34);
-    mock_adc_set_value(2048);  // Mid-range value
+func TestPipeline_ProcessEvent(t *testing.T) {
+    // Setup
+    logger := zaptest.NewLogger(t)
+    pipeline := NewPipeline(logger, WithBufferSize(100))
+    
+    handler := new(MockEventHandler)
+    pipeline.RegisterHandler("moisture", handler)
+    
+    event := SensorEvent{
+        SensorID:  "sensor-1",
+        PlantID:   "plant-1",
+        Type:      "moisture",
+        Value:     45.5,
+        Unit:      "percentage",
+        Timestamp: time.Now(),
+    }
+    
+    // Expect
+    handler.On("Handle", mock.Anything, event).Return(nil)
     
     // Act
-    float moisture;
-    int result = moisture_sensor_read(&moisture);
+    err := pipeline.ProcessEvent(context.Background(), event)
     
     // Assert
-    TEST_ASSERT_EQUAL(0, result);
-    TEST_ASSERT_FLOAT_WITHIN(0.1, 50.0, moisture);
+    assert.NoError(t, err)
+    handler.AssertExpectations(t)
+}
+
+func TestPipeline_ConcurrentProcessing(t *testing.T) {
+    logger := zaptest.NewLogger(t)
+    pipeline := NewPipeline(logger, WithWorkerCount(5))
+    
+    processed := make(chan SensorEvent, 1000)
+    
+    // Register handler that records processed events
+    pipeline.RegisterHandler("test", HandlerFunc(func(ctx context.Context, event SensorEvent) error {
+        processed <- event
+        return nil
+    }))
+    
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    
+    // Start pipeline
+    go pipeline.Run(ctx)
+    
+    // Send concurrent events
+    eventCount := 100
+    for i := 0; i < eventCount; i++ {
+        go func(idx int) {
+            event := SensorEvent{
+                SensorID: fmt.Sprintf("sensor-%d", idx),
+                Type:     "test",
+                Value:    float64(idx),
+            }
+            pipeline.Submit(event)
+        }(i)
+    }
+    
+    // Wait for processing
+    time.Sleep(1 * time.Second)
+    
+    // Verify all events processed
+    assert.Equal(t, eventCount, len(processed))
+}
+
+// Benchmark concurrent device polling
+func BenchmarkManager_PollAll(b *testing.B) {
+    manager := NewManager()
+    
+    // Add test devices
+    for i := 0; i < 100; i++ {
+        device := &Device{
+            ID:   fmt.Sprintf("device-%d", i),
+            Type: "moisture_sensor",
+        }
+        manager.AddDevice(device)
+    }
+    
+    ctx := context.Background()
+    
+    b.ResetTimer()
+    b.RunParallel(func(pb *testing.PB) {
+        for pb.Next() {
+            _, _ = manager.PollAll(ctx)
+        }
+    })
+}
+```
+
+### Rust Testing
+```rust
+// hardware/drivers/src/moisture_sensor.rs (test module)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    
+    // Mock ADC functions for testing
+    #[no_mangle]
+    pub extern "C" fn adc_init(_pin: u8) -> i32 {
+        0 // Success
+    }
+    
+    #[no_mangle]
+    pub extern "C" fn adc_read(_pin: u8, value: *mut u16) -> i32 {
+        unsafe {
+            *value = 2000; // Mock reading
+        }
+        0
+    }
+    
+    #[test]
+    fn test_sensor_creation() {
+        let sensor = MoistureSensor::new(34).unwrap();
+        assert_eq!(sensor.pin, 34);
+    }
+    
+    #[test]
+    fn test_invalid_pin() {
+        let result = MoistureSensor::new(40);
+        assert!(matches!(result, Err(SensorError::InvalidValue(_))));
+    }
+    
+    #[test]
+    fn test_read_uninitialized() {
+        let sensor = MoistureSensor::new(34).unwrap();
+        let result = sensor.read();
+        assert!(matches!(result, Err(SensorError::NotInitialized)));
+    }
+    
+    #[test]
+    fn test_concurrent_reads() {
+        let sensor = Arc::new(MoistureSensor::new(34).unwrap());
+        sensor.init().unwrap();
+        
+        let mut handles = vec![];
+        
+        // Spawn multiple threads reading concurrently
+        for _ in 0..10 {
+            let sensor_clone = Arc::clone(&sensor);
+            let handle = thread::spawn(move || {
+                sensor_clone.read()
+            });
+            handles.push(handle);
+        }
+        
+        // All reads should succeed
+        for handle in handles {
+            let result = handle.join().unwrap();
+            assert!(result.is_ok());
+        }
+    }
+    
+    #[test]
+    fn test_calibration_boundaries() {
+        let sensor = MoistureSensor::new(34).unwrap();
+        
+        // Test dry value
+        assert_eq!(sensor.calibrate_value(2800), 0.0);
+        
+        // Test wet value
+        assert_eq!(sensor.calibrate_value(1200), 100.0);
+        
+        // Test mid-range
+        let mid = sensor.calibrate_value(2000);
+        assert!((mid - 50.0).abs() < 1.0);
+    }
+}
+
+// Integration tests in tests/integration.rs
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use serial_test::serial;
+    
+    #[test]
+    #[serial]
+    fn test_pump_safety_limits() {
+        let pump = PumpController::new(25);
+        
+        // Test duration limit
+        let result = tokio_test::block_on(
+            pump.run_for_duration(Duration::from_secs(150))
+        );
+        assert!(matches!(result, Err(PumpError::DurationExceeded)));
+    }
+    
+    #[test]
+    #[serial]
+    fn test_pump_cycle_interval() {
+        let pump = PumpController::new(25);
+        
+        // First run should succeed
+        tokio_test::block_on(async {
+            pump.run_for_duration(Duration::from_secs(5)).await.unwrap();
+            
+            // Immediate second run should fail
+            let result = pump.run_for_duration(Duration::from_secs(5)).await;
+            assert!(matches!(result, Err(PumpError::CycleIntervalViolation)));
+            
+            // Wait for interval, then should succeed
+            tokio::time::sleep(Duration::from_secs(61)).await;
+            pump.run_for_duration(Duration::from_secs(5)).await.unwrap();
+        });
+    }
+    
+    #[test]
+    fn test_emergency_stop() {
+        let pump = PumpController::new(25);
+        
+        tokio_test::block_on(async {
+            // Start pump in background
+            let pump_clone = pump.clone();
+            tokio::spawn(async move {
+                pump_clone.run_for_duration(Duration::from_secs(10)).await
+            });
+            
+            // Wait a bit then emergency stop
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            pump.emergency_stop().unwrap();
+            
+            // Verify pump is stopped
+            assert!(!pump.is_running());
+        });
+    }
 }
 ```
 
