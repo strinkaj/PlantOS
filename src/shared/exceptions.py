@@ -33,6 +33,26 @@ class ValidationError(PlantOSError):
         self.value = value
 
 
+class ContractViolationError(PlantOSError):
+    """Base class for contract programming violations."""
+    pass
+
+
+class PreconditionError(ContractViolationError):
+    """Raised when a function precondition is violated."""
+    pass
+
+
+class PostconditionError(ContractViolationError):
+    """Raised when a function postcondition is violated."""
+    pass
+
+
+class InvariantError(ContractViolationError):
+    """Raised when a class invariant is violated."""
+    pass
+
+
 class DatabaseError(PlantOSError):
     """Raised when database operations fail."""
     pass

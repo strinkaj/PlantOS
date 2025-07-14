@@ -22,7 +22,7 @@ from src.application.models import APIConfig, ErrorResponse
 from src.infrastructure.database.config import DatabaseConfig, initialize_database, close_database
 from src.infrastructure.database.models import setup_timescaledb_features
 from src.shared.exceptions import PlantOSError, get_http_status_code, should_log_error
-from src.application.api.routes import plants, health, system
+from src.application.api.routes import plants, health, system, sensors
 from src.infrastructure.logging.config import configure_logging
 from src.infrastructure.monitoring.metrics import setup_metrics
 
@@ -239,6 +239,12 @@ def setup_routes(app: FastAPI) -> None:
         system.router,
         prefix="/api/v1/system",
         tags=["System"]
+    )
+    
+    app.include_router(
+        sensors.router,
+        prefix="/api/v1/sensors",
+        tags=["Sensors"]
     )
     
     # Root endpoint
