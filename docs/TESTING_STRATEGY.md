@@ -74,54 +74,6 @@ class TestPlant:
         assert plant.needs_water_by_moisture(moisture) == expected
 ```
 
-#### C Unit Test Example
-```c
-// tests/unit/hardware/test_moisture_sensor.c
-#include "unity.h"
-#include "moisture_sensor.h"
-#include "mock_adc.h"
-
-void setUp(void) {
-    mock_adc_init();
-    moisture_sensor_init(34);
-}
-
-void tearDown(void) {
-    mock_adc_cleanup();
-}
-
-void test_moisture_reading_maps_correctly(void) {
-    // Test dry condition
-    mock_adc_set_value(3000);  // Dry value
-    float moisture;
-    TEST_ASSERT_EQUAL(0, moisture_sensor_read(&moisture));
-    TEST_ASSERT_FLOAT_WITHIN(1.0, 0.0, moisture);
-    
-    // Test wet condition
-    mock_adc_set_value(1200);  // Wet value
-    TEST_ASSERT_EQUAL(0, moisture_sensor_read(&moisture));
-    TEST_ASSERT_FLOAT_WITHIN(1.0, 100.0, moisture);
-    
-    // Test mid-range
-    mock_adc_set_value(2100);  // Mid value
-    TEST_ASSERT_EQUAL(0, moisture_sensor_read(&moisture));
-    TEST_ASSERT_FLOAT_WITHIN(1.0, 50.0, moisture);
-}
-
-void test_moisture_sensor_handles_out_of_range_values(void) {
-    float moisture;
-    
-    // Test below range
-    mock_adc_set_value(1000);
-    TEST_ASSERT_EQUAL(0, moisture_sensor_read(&moisture));
-    TEST_ASSERT_EQUAL_FLOAT(100.0, moisture);
-    
-    // Test above range
-    mock_adc_set_value(4000);
-    TEST_ASSERT_EQUAL(0, moisture_sensor_read(&moisture));
-    TEST_ASSERT_EQUAL_FLOAT(0.0, moisture);
-}
-```
 
 ### Integration Tests
 
