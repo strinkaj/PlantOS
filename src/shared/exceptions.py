@@ -33,6 +33,11 @@ class ValidationError(PlantOSError):
         self.value = value
 
 
+class DataQualityError(PlantOSError):
+    """Raised when data quality issues are detected."""
+    pass
+
+
 class ContractViolationError(PlantOSError):
     """Base class for contract programming violations."""
     pass
@@ -126,6 +131,16 @@ class PlantNotFoundError(BusinessLogicError):
         self.plant_id = plant_id
 
 
+class PlantAlreadyExistsError(BusinessLogicError):
+    """Raised when trying to create a plant that already exists."""
+    pass
+
+
+class SensorAlreadyExistsError(BusinessLogicError):
+    """Raised when trying to register a sensor that already exists."""
+    pass
+
+
 class SpeciesNotFoundError(BusinessLogicError):
     """Raised when a plant species is not found."""
     
@@ -140,6 +155,19 @@ class SensorNotFoundError(BusinessLogicError):
     def __init__(self, sensor_id: UUID, **kwargs):
         super().__init__(f"Sensor not found: {sensor_id}", **kwargs)
         self.sensor_id = sensor_id
+
+
+class ScheduleNotFoundError(BusinessLogicError):
+    """Raised when a watering schedule is not found."""
+    
+    def __init__(self, schedule_id: UUID, **kwargs):
+        super().__init__(f"Watering schedule not found: {schedule_id}", **kwargs)
+        self.schedule_id = schedule_id
+
+
+class ScheduleConflictError(BusinessLogicError):
+    """Raised when a schedule conflicts with existing schedules."""
+    pass
 
 
 class DuplicateResourceError(BusinessLogicError):

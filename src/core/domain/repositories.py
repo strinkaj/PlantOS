@@ -10,10 +10,10 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import UUID
 
-from src.shared.types import PlantID, SensorID, SpeciesID
+from src.shared.types import PlantID, SensorID, SpeciesID, ScheduleID
 from src.core.domain.entities import (
     Plant, PlantSpecies, SensorReading, CareEvent, WateringEvent,
-    PlantHealthAssessment, Sensor, Actuator, PlantStatus
+    PlantHealthAssessment, Sensor, Actuator, PlantStatus, WateringSchedule
 )
 
 
@@ -162,6 +162,17 @@ class SensorReadingRepository(ABC):
         pass
     
     @abstractmethod
+    async def get_by_sensor_id(
+        self,
+        sensor_id: SensorID,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        quality_filter: Optional[str] = None
+    ) -> List[SensorReading]:
+        """Get readings for a sensor with optional filtering."""
+        pass
+    
+    @abstractmethod
     async def get_average_for_period(
         self,
         sensor_id: SensorID,
@@ -244,6 +255,11 @@ class SensorRepository(ABC):
     @abstractmethod
     async def get_by_id(self, sensor_id: SensorID) -> Optional[Sensor]:
         """Retrieve a sensor by ID."""
+        pass
+    
+    @abstractmethod
+    async def get_by_hardware_id(self, hardware_id: str) -> Optional[Sensor]:
+        """Retrieve a sensor by its hardware ID."""
         pass
     
     @abstractmethod
@@ -372,4 +388,53 @@ class PlantHealthRepository(ABC):
     @abstractmethod
     async def delete_old_assessments(self, older_than: datetime) -> int:
         """Delete assessments older than specified date."""
+        pass
+
+
+class WateringScheduleRepository(ABC):
+    """Repository interface for WateringSchedule entities."""
+    
+    @abstractmethod
+    async def create(self, schedule: WateringSchedule) -> WateringSchedule:
+        """Create a new watering schedule."""
+        pass
+    
+    @abstractmethod
+    async def get_by_id(self, schedule_id: ScheduleID) -> Optional[WateringSchedule]:
+        """Retrieve a schedule by its ID."""
+        pass
+    
+    @abstractmethod
+    async def get_by_plant_id(self, plant_id: PlantID) -> List[WateringSchedule]:
+        """Get all schedules for a specific plant."""
+        pass
+    
+    @abstractmethod
+    async def get_all(self) -> List[WateringSchedule]:
+        """Get all watering schedules."""
+        pass
+    
+    @abstractmethod
+    async def get_due_schedules(self, current_time: datetime) -> List[WateringSchedule]:
+        """Get schedules that are due for execution."""
+        pass
+    
+    @abstractmethod
+    async def get_enabled_schedules(self) -> List[WateringSchedule]:
+        """Get all enabled schedules."""
+        pass
+    
+    @abstractmethod
+    async def update(self, schedule: WateringSchedule) -> WateringSchedule:
+        """Update an existing schedule."""
+        pass
+    
+    @abstractmethod
+    async def delete(self, schedule_id: ScheduleID) -> bool:
+        """Delete a schedule by ID."""
+        pass
+    
+    @abstractmethod
+    async def mark_executed(self, schedule_id: ScheduleID, execution_time: datetime) -> bool:
+        """Mark a schedule as executed and update next execution time."""
         pass

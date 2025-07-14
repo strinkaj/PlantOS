@@ -19,6 +19,9 @@ from src.shared.types import (
     DurationSeconds, IntervalHours
 )
 
+# Import additional types for scheduling
+from src.shared.types import ScheduleID, ScheduleType
+
 
 class PlantStatus(str, Enum):
     """Current status of a plant in the system."""
@@ -336,3 +339,38 @@ def create_sensor_reading(
         quality_score=quality_score,
         timestamp=datetime.utcnow()
     )
+
+
+@dataclass(frozen=True)
+class WateringSchedule:
+    """Represents a watering schedule for a plant."""
+    id: ScheduleID
+    plant_id: PlantID
+    schedule_type: ScheduleType
+    start_date: datetime
+    time_of_day: str  # HH:MM format
+    interval_days: int
+    duration_seconds: int
+    amount_ml: Optional[float] = None
+    enabled: bool = True
+    last_executed: Optional[datetime] = None
+    next_execution: Optional[datetime] = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    
+    def __post_init__(self):
+        """Validate schedule data after initialization."""
+        if self.interval_days <= 0:
+            raise ValueError("Interval days must be positive")
+        if self.duration_seconds <= 0 or self.duration_seconds > 600:
+            raise ValueError("Duration must be between 1 and 600 seconds")
+        if self.amount_ml is not None and self.amount_ml <= 0:
+            raise ValueError("Amount must be positive")
+            
+        # Validate time format
+        try:
+            hour, minute = map(int, self.time_of_day.split(':'))
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                raise ValueError("Invalid time format")
+        except (ValueError, AttributeError):
+            raise ValueError("Time must be in HH:MM format")
